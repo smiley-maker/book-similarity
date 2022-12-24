@@ -47,8 +47,81 @@ def stem_words(par):
 def apply_all(par):
     return stem_words(remove_stop_words(clean_text(par)))
 
+### LDA Topic Modeling
+def train_lda(data):
+    num_topics = 100
+    chunksize = 100
+#    tokens = [word for word in data["description"].split()]
+    dictionary = corpora.Dictionary(data["description"])
+    corpus = [dictionary.doc2bow(doc) for doc in data['description']]
+    # low alpha means each document is only represented by a small number of topics, and vice versa
+    # low eta means each topic is only represented by a small number of words, and vice versa
+    lda = LdaModel(corpus=corpus, num_topics=num_topics, id2word=dictionary,
+                   alpha=1e-2, eta=0.5e-2, chunksize=chunksize, minimum_probability=0.0, passes=2)
+    return dictionary,corpus,lda
+
+def jensen_shannon(query, matrix):
+    """
+    This function implements a Jensen-Shannon similarity
+    between the input query (an LDA topic distribution for a document)
+    and the entire corpus of topic distributions.
+    It returns an array of length M where M is the number of documents in the corpus
+    """
+    # lets keep with the p,q notation above
+    p = query[None,:].T # take transpose
+    q = matrix.T # transpose matrix
+    m = 0.5*(p + q)
+    return np.sqrt(0.5*(entropy(p,m) + entropy(q,m)))
+
+def get_most_similar_books(query,matrix,k=10):
+    """
+    This function implements the Jensen-Shannon distance above
+    and retruns the top k indices of the smallest jensen shannon distances
+    """
+    sims = jensen_shannon(query,matrix) # list of jensen shannon distances
+    most_sim_ids = sims.argsort()[:k]
+    most_similar_df = train[train.index.isin(most_sim_ids)]
+    return most_similar_df # the top k positional index of the smallest Jensen Shannon distances
+
+## Plotting a histogram of the topic distribution for random book
+def plotDoc(distribution):
+    fig, ax = plt.subplots(figsize=(12,6));
+    # the histogram of the data
+    patches = ax.bar(np.arange(len(distribution)), distribution)
+    ax.set_xlabel('Topic ID', fontsize=15)
+    ax.set_ylabel('Topic Contribution', fontsize=15)
+    ax.set_title("Topic Distribution for an Unseen Article", fontsize=20)
+    ax.set_xticks(np.linspace(10,100,10))
+    fig.tight_layout()
+    plt.show()
+
+#Similarity scoring
+def get_similarity(lda, point, dictionary):
+    new_bow = dictionary.doc2bow(test.iloc[point, 6])
+    new_doc_distribution = np.array([tup[1] for tup in lda.get_document_topics(bow=new_bow)]) #tup[1] -> rating
+    doc_topic_dist = np.array([[tup[1] for tup in lst] for lst in lda[corpus]])
+    return get_most_similar_books(new_doc_distribution, doc_topic_dist)
+
+
 #creating a new dataframe object
 df = pd.read_csv("data.csv", index_col=0)
 preprocess(df)
 df["description"] = df['description'].apply(apply_all)
 #print(df["description"].head())
+
+#Splitting into training & testing data
+point = np.random.rand(len(df)) < 0.9 #random split percentage
+train = df[point] #Splits the original data up to the point
+test = df[~point] #Reserves the rest of the data for testing
+
+dictionary, corpus, lda = train_lda(df)
+#trial = lda.show_topics(num_topics=10, num_words=20)
+#print(trial)
+
+
+try:
+    point = int(input("Enter a book index: "))
+except:
+    print("Invalid index")
+
+print(get_similarity(lda, point, dictionary))
